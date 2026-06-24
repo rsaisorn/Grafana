@@ -58,27 +58,36 @@
             "transformations": []
           }
         },
-        "description": "Running total of AI API spend billed so far today. Resets at midnight (browser timezone).\n",
+        "description": "Total AI spend today compared against the daily budget limit of $100. Green = safe, yellow = getting close, red = over budget.\n",
         "id": 1,
         "links": [],
-        "title": "💰  Total Spend Today",
+        "title": "💰 Spend vs Daily Budget",
         "vizConfig": {
-          "group": "stat",
+          "group": "gauge",
           "kind": "VizConfig",
           "spec": {
             "fieldConfig": {
               "defaults": {
                 "color": {
-                  "fixedColor": "#00C49F",
-                  "mode": "fixed"
+                  "mode": "thresholds"
                 },
                 "decimals": 2,
+                "max": 100,
+                "min": 0,
                 "thresholds": {
                   "mode": "absolute",
                   "steps": [
                     {
                       "color": "#00C49F",
                       "value": 0
+                    },
+                    {
+                      "color": "#FBBF24",
+                      "value": 70
+                    },
+                    {
+                      "color": "#F87171",
+                      "value": 100
                     }
                   ]
                 },
@@ -87,11 +96,17 @@
               "overrides": []
             },
             "options": {
-              "colorMode": "background",
-              "graphMode": "none",
-              "justifyMode": "center",
+              "barShape": "flat",
+              "barWidthFactor": 0.5,
+              "effects": {
+                "barGlow": false,
+                "centerGlow": false,
+                "gradient": true
+              },
+              "endpointMarker": "point",
+              "minVizHeight": 75,
+              "minVizWidth": 75,
               "orientation": "auto",
-              "percentChangeColorMode": "standard",
               "reduceOptions": {
                 "calcs": [
                   "lastNotNull"
@@ -99,9 +114,14 @@
                 "fields": "",
                 "values": false
               },
-              "showPercentChange": false,
-              "textMode": "auto",
-              "wideLayout": true
+              "segmentCount": 1,
+              "segmentSpacing": 0.3,
+              "shape": "gauge",
+              "showThresholdLabels": true,
+              "showThresholdMarkers": true,
+              "sizing": "auto",
+              "sparkline": true,
+              "textMode": "auto"
             }
           },
           "version": "13.0.2"
@@ -130,7 +150,7 @@
                       "format": 1,
                       "pluginVersion": "4.18.0",
                       "queryType": "table",
-                      "rawSql": "SELECT\n  api_key,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND api_key IS NOT NULL\n  AND api_key != ''\nGROUP BY api_key\nORDER BY total_spend DESC\nLIMIT 10"
+                      "rawSql": "SELECT\n  key_alias,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND key_alias IS NOT NULL\n  AND key_alias != ''\nGROUP BY key_alias\nORDER BY total_spend DESC\nLIMIT 10"
                     },
                     "version": "v0"
                   },
@@ -142,10 +162,10 @@
             "transformations": []
           }
         },
-        "description": "API keys (applications/teams) driving the highest spend today. Useful for understanding which integration is the biggest cost driver.\n",
+        "description": "Key aliases driving the highest AI spend in the selected time range. This is easier to read than raw API keys and helps identify which app, team, or use case is contributing most to spend.\n",
         "id": 12,
         "links": [],
-        "title": "🔑  Top 10 API Keys by Spend",
+        "title": "🔑 Top Key Aliases by Spend",
         "vizConfig": {
           "group": "barchart",
           "kind": "VizConfig",
@@ -153,7 +173,8 @@
             "fieldConfig": {
               "defaults": {
                 "color": {
-                  "mode": "palette-classic"
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
                 },
                 "custom": {
                   "axisBorderShow": false,
@@ -217,7 +238,7 @@
         }
       }
     },
-    "panel-13": {
+    "panel-14": {
       "kind": "Panel",
       "spec": {
         "data": {
@@ -235,46 +256,11 @@
                     "group": "grafana-clickhouse-datasource",
                     "kind": "DataQuery",
                     "spec": {
-                      "builderOptions": {
-                        "aggregates": [],
-                        "columns": [
-                          {
-                            "alias": "*",
-                            "custom": false,
-                            "name": "*",
-                            "type": "String"
-                          }
-                        ],
-                        "database": "litellm_prod",
-                        "filters": [],
-                        "groupBy": [],
-                        "limit": 0,
-                        "meta": {},
-                        "mode": "list",
-                        "orderBy": [
-                          {
-                            "dir": "DESC",
-                            "name": "endTime"
-                          }
-                        ],
-                        "queryType": "table",
-                        "table": "LiteLLM_SpendLogs"
-                      },
-                      "editorType": "builder",
+                      "editorType": "sql",
                       "format": 1,
-                      "meta": {
-                        "builderOptions": {
-                          "columns": [],
-                          "database": "",
-                          "limit": 1000,
-                          "mode": "list",
-                          "queryType": "table",
-                          "table": ""
-                        }
-                      },
                       "pluginVersion": "4.18.0",
                       "queryType": "table",
-                      "rawSql": "SELECT * FROM \"litellm_prod\".\"LiteLLM_SpendLogs\" ORDER BY endTime DESC"
+                      "rawSql": "SELECT\n  end_user,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND end_user IS NOT NULL\n  AND end_user != ''\nGROUP BY end_user\nORDER BY total_spend DESC\nLIMIT 10"
                     },
                     "version": "v0"
                   },
@@ -286,48 +272,76 @@
             "transformations": []
           }
         },
-        "description": "",
-        "id": 13,
+        "description": "End users generating the highest AI spend in the selected time range. This is useful for cost monitoring and troubleshooting.\n",
+        "id": 14,
         "links": [],
-        "title": "Data Table",
+        "title": "👤 Top Users by Spend",
         "vizConfig": {
-          "group": "table",
+          "group": "barchart",
           "kind": "VizConfig",
           "spec": {
             "fieldConfig": {
               "defaults": {
                 "color": {
-                  "mode": "palette-classic"
+                  "fixedColor": "#A78BFA",
+                  "mode": "fixed"
                 },
                 "custom": {
-                  "align": "auto",
-                  "cellOptions": {
-                    "type": "auto"
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "USD",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 85,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
                   },
-                  "footer": {
-                    "reducers": []
+                  "lineWidth": 0,
+                  "scaleDistribution": {
+                    "type": "linear"
                   },
-                  "inspect": false
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
                 },
+                "decimals": 2,
                 "thresholds": {
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "#F59E0B",
                       "value": 0
-                    },
-                    {
-                      "color": "red",
-                      "value": 80
                     }
                   ]
-                }
+                },
+                "unit": "currencyUSD"
               },
               "overrides": []
             },
             "options": {
-              "cellHeight": "sm",
-              "showHeader": true
+              "barRadius": 6,
+              "barWidth": 0.7,
+              "fullHighlight": true,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "hidden",
+                "placement": "bottom",
+                "showLegend": false
+              },
+              "orientation": "horizontal",
+              "showValue": "auto",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
             }
           },
           "version": "13.0.2"
@@ -615,7 +629,7 @@
                       "format": 0,
                       "pluginVersion": "4.18.0",
                       "queryType": "timeseries",
-                      "rawSql": "SELECT\n  toStartOfInterval(startTime, INTERVAL 30 MINUTE) AS time,\n  sum(spend) AS Today\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\nGROUP BY time\nORDER BY time ASC"
+                      "rawSql": "SELECT\n  time,\n  sum(period_spend) OVER (ORDER BY time ASC) AS Today\nFROM\n(\n  SELECT\n    toStartOfInterval(startTime, INTERVAL 30 MINUTE) AS time,\n    sum(spend) AS period_spend\n  FROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\n  WHERE startTime >= toStartOfDay(now())\n    AND startTime <= now()\n  GROUP BY time\n)\nORDER BY time ASC"
                     },
                     "version": "v0"
                   },
@@ -637,11 +651,33 @@
                       "format": 0,
                       "pluginVersion": "4.18.0",
                       "queryType": "timeseries",
-                      "rawSql": "SELECT\n  toStartOfInterval(\n    startTime + INTERVAL 1 DAY, INTERVAL 30 MINUTE\n  ) AS time,\n  sum(spend) AS Yesterday\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime - INTERVAL 1 DAY\n  AND startTime <= $__toTime   - INTERVAL 1 DAY\nGROUP BY time\nORDER BY time ASC"
+                      "rawSql": "SELECT\n  time,\n  sum(period_spend) OVER (ORDER BY time ASC) AS Yesterday\nFROM\n(\n  SELECT\n    toStartOfInterval(startTime + INTERVAL 1 DAY, INTERVAL 30 MINUTE) AS time,\n    sum(spend) AS period_spend\n  FROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\n  WHERE startTime >= toStartOfDay(now() - INTERVAL 1 DAY)\n    AND startTime < toStartOfDay(now())\n  GROUP BY time\n)\nORDER BY time ASC"
                     },
                     "version": "v0"
                   },
                   "refId": "B"
+                }
+              },
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 0,
+                      "pluginVersion": "4.18.0",
+                      "queryType": "timeseries",
+                      "rawSql": "SELECT\n  time,\n  sum(period_spend) OVER (ORDER BY time ASC) AS same_day_last_week\nFROM\n(\n  SELECT\n    toStartOfInterval(startTime + INTERVAL 7 DAY, INTERVAL 30 MINUTE) AS time,\n    sum(spend) AS period_spend\n  FROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\n  WHERE startTime >= toStartOfDay(now() - INTERVAL 7 DAY)\n    AND startTime < toStartOfDay(now() - INTERVAL 6 DAY)\n  GROUP BY time\n)\nORDER BY time ASC"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "C"
                 }
               }
             ],
@@ -649,10 +685,10 @@
             "transformations": []
           }
         },
-        "description": "30-minute rolling spend — today (solid) vs same window yesterday (dashed). Helps spot unusual cost spikes early in the day.\n",
+        "description": "Cumulative AI spend throughout the day. Each line adds 30-minute spend into a running total, comparing today with yesterday and last Wednesday at the same time of day.\n",
         "id": 7,
         "links": [],
-        "title": "📈  Spend Trend — Today vs Yesterday",
+        "title": "📈 Running Total Spend Comparison",
         "vizConfig": {
           "group": "timeseries",
           "kind": "VizConfig",
@@ -671,7 +707,7 @@
                   "barAlignment": 0,
                   "barWidthFactor": 0.6,
                   "drawStyle": "line",
-                  "fillOpacity": 20,
+                  "fillOpacity": 15,
                   "gradientMode": "opacity",
                   "hideFrom": {
                     "legend": false,
@@ -680,6 +716,9 @@
                   },
                   "insertNulls": false,
                   "lineInterpolation": "smooth",
+                  "lineStyle": {
+                    "fill": "solid"
+                  },
                   "lineWidth": 3,
                   "pointSize": 5,
                   "scaleDistribution": {
@@ -758,6 +797,36 @@
                       }
                     }
                   ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "same_day_last_week",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "displayName",
+                      "value": "Same Day Last Week"
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "#F59E0B",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          0,
+                          10
+                        ],
+                        "fill": "dot"
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -805,7 +874,7 @@
                       "format": 1,
                       "pluginVersion": "4.18.0",
                       "queryType": "table",
-                      "rawSql": "SELECT\n  formatDateTime(toStartOfInterval(startTime, INTERVAL 30 MINUTE), '%H:%i') AS time_label,\n  count(*) AS request_count\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\nGROUP BY time_label\nORDER BY min(toStartOfInterval(startTime, INTERVAL 30 MINUTE)) ASC"
+                      "rawSql": "SELECT\n  formatDateTime(toStartOfInterval(startTime + INTERVAL 7 HOUR, INTERVAL 30 MINUTE), '%H:%i') AS time_label,\n  count(*) AS request_count\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\nGROUP BY time_label\nORDER BY min(toStartOfInterval(startTime + INTERVAL 7 HOUR, INTERVAL 30 MINUTE)) ASC"
                     },
                     "version": "v0"
                   },
@@ -916,7 +985,7 @@
                       "format": 1,
                       "pluginVersion": "4.18.0",
                       "queryType": "table",
-                      "rawSql": "SELECT\n  model,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\nGROUP BY model\nORDER BY total_spend DESC\nLIMIT 10"
+                      "rawSql": "SELECT\n  replaceRegexpOne(model, '^.*/', '') AS model_name,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"LiteLLM_SpendLogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND model IS NOT NULL\n  AND model != ''\nGROUP BY model_name\nORDER BY total_spend DESC\nLIMIT 10"
                     },
                     "version": "v0"
                   },
@@ -1094,7 +1163,7 @@
               "name": "panel-9"
             },
             "height": 9,
-            "width": 12,
+            "width": 8,
             "x": 0,
             "y": 13
           }
@@ -1107,8 +1176,8 @@
               "name": "panel-12"
             },
             "height": 9,
-            "width": 12,
-            "x": 12,
+            "width": 8,
+            "x": 8,
             "y": 13
           }
         },
@@ -1117,12 +1186,12 @@
           "spec": {
             "element": {
               "kind": "ElementReference",
-              "name": "panel-13"
+              "name": "panel-14"
             },
-            "height": 8,
-            "width": 12,
-            "x": 0,
-            "y": 22
+            "height": 9,
+            "width": 8,
+            "x": 16,
+            "y": 13
           }
         }
       ]
@@ -1147,7 +1216,7 @@
     "tv"
   ],
   "timeSettings": {
-    "autoRefresh": "",
+    "autoRefresh": "1m",
     "autoRefreshIntervals": [
       "10s",
       "30s",
@@ -1157,10 +1226,10 @@
       "30m"
     ],
     "fiscalYearStartMonth": 0,
-    "from": "now-2d",
+    "from": "now/d",
     "hideTimepicker": false,
-    "timezone": "Asia/Bangkok",
-    "to": "now"
+    "timezone": "browser",
+    "to": "now/d"
   },
   "title": "⚡ LiteLLM AI Operations — Live Today",
   "variables": []
