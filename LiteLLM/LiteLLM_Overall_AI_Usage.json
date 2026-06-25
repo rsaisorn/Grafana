@@ -1,0 +1,1512 @@
+{
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Off",
+  "description": "Overall LiteLLM dashboard across all apps/key aliases. No app dropdown; panels summarize total spend, tokens, requests, model cost, users, and app-level spend.",
+  "editable": true,
+  "elements": {
+    "panel-1": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 0,
+                      "pluginVersion": "4.18.0",
+                      "queryType": "timeseries",
+                      "rawSql": "WITH\n  $__fromTime AS selected_start,\n  $__toTime AS selected_end\nSELECT\n  time,\n  if(countIf(period = 'Today') = 0, NULL, maxIf(line_value, period = 'Today')) AS Today,\n  if(countIf(period = 'Yesterday') = 0, NULL, maxIf(line_value, period = 'Yesterday')) AS Yesterday,\n  if(countIf(period = 'Same Day Last Week') = 0, NULL, maxIf(line_value, period = 'Same Day Last Week')) AS same_day_last_week,\n  if(countIf(period = '7-Day Average') = 0, NULL, maxIf(line_value, period = '7-Day Average')) AS Seven_Day_Average\nFROM\n(\n  /* Today running total */\n  SELECT\n    time,\n    'Today' AS period,\n    sum(period_spend) OVER (ORDER BY time ASC) AS line_value\n  FROM\n  (\n    SELECT\n      toStartOfInterval(startTime, INTERVAL 30 MINUTE) AS time,\n      sum(spend) AS period_spend\n    FROM \"litellm_prod\".\"monitor_spendlogs\"\n    WHERE startTime >= selected_start\n      AND startTime <= selected_end\n    GROUP BY time\n  )\n\n  UNION ALL\n\n  /* Previous day running total shifted into selected day */\n  SELECT\n    time,\n    'Yesterday' AS period,\n    sum(ifNull(period_spend, 0)) OVER (\n      ORDER BY bucket_index ASC\n      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n    ) AS line_value\n  FROM\n  (\n    SELECT\n      b.bucket_index AS bucket_index,\n      selected_start + toIntervalMinute(b.bucket_index * 30) AS time,\n      s.period_spend AS period_spend\n    FROM\n    (\n      SELECT toInt64(number) AS bucket_index\n      FROM numbers(48)\n    ) AS b\n    LEFT JOIN\n    (\n      SELECT\n        toInt64(intDiv(dateDiff('minute', selected_start - INTERVAL 1 DAY, startTime), 30)) AS bucket_index,\n        sum(spend) AS period_spend\n      FROM \"litellm_prod\".\"monitor_spendlogs\"\n      WHERE startTime >= selected_start - INTERVAL 1 DAY\n        AND startTime <= selected_end - INTERVAL 1 DAY\n      GROUP BY bucket_index\n    ) AS s\n      ON b.bucket_index = s.bucket_index\n    WHERE selected_start + toIntervalMinute(b.bucket_index * 30) <= selected_end\n  )\n\n  UNION ALL\n\n  /* Same day last week running total shifted into selected day */\n  SELECT\n    time,\n    'Same Day Last Week' AS period,\n    sum(ifNull(period_spend, 0)) OVER (\n      ORDER BY bucket_index ASC\n      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n    ) AS line_value\n  FROM\n  (\n    SELECT\n      b.bucket_index AS bucket_index,\n      selected_start + toIntervalMinute(b.bucket_index * 30) AS time,\n      s.period_spend AS period_spend\n    FROM\n    (\n      SELECT toInt64(number) AS bucket_index\n      FROM numbers(48)\n    ) AS b\n    LEFT JOIN\n    (\n      SELECT\n        toInt64(intDiv(dateDiff('minute', selected_start - INTERVAL 7 DAY, startTime), 30)) AS bucket_index,\n        sum(spend) AS period_spend\n      FROM \"litellm_prod\".\"monitor_spendlogs\"\n      WHERE startTime >= selected_start - INTERVAL 7 DAY\n        AND startTime <= selected_end - INTERVAL 7 DAY\n      GROUP BY bucket_index\n    ) AS s\n      ON b.bucket_index = s.bucket_index\n    WHERE selected_start + toIntervalMinute(b.bucket_index * 30) <= selected_end\n  )\n\n  UNION ALL\n\n  /* 7-day average running total */\n  SELECT\n    time,\n    '7-Day Average' AS period,\n    avg(running_spend) AS line_value\n  FROM\n  (\n    SELECT\n      selected_start + toIntervalMinute(b.bucket_index * 30) AS time,\n      d.day_offset AS day_offset,\n      b.bucket_index AS bucket_index,\n      sum(ifNull(s.period_spend, 0)) OVER (\n        PARTITION BY d.day_offset\n        ORDER BY b.bucket_index ASC\n        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n      ) AS running_spend\n    FROM\n    (\n      SELECT toInt64(number + 1) AS day_offset\n      FROM numbers(7)\n    ) AS d\n    CROSS JOIN\n    (\n      SELECT toInt64(number) AS bucket_index\n      FROM numbers(48)\n    ) AS b\n    LEFT JOIN\n    (\n      SELECT\n        day_offset,\n        bucket_index,\n        sum(spend) AS period_spend\n      FROM\n      (\n        SELECT\n          startTime,\n          spend,\n          toInt64(intDiv(dateDiff('minute', startTime, selected_start), 1440) + 1) AS day_offset,\n          toInt64(\n            intDiv(\n              dateDiff(\n                'minute',\n                selected_start - toIntervalDay(toInt64(intDiv(dateDiff('minute', startTime, selected_start), 1440) + 1)),\n                startTime\n              ),\n              30\n            )\n          ) AS bucket_index\n        FROM \"litellm_prod\".\"monitor_spendlogs\"\n        WHERE startTime >= selected_start - INTERVAL 7 DAY\n          AND startTime < selected_start\n      )\n      WHERE day_offset >= 1\n        AND day_offset <= 7\n        AND bucket_index >= 0\n        AND bucket_index < 48\n      GROUP BY day_offset, bucket_index\n    ) AS s\n      ON d.day_offset = s.day_offset\n     AND b.bucket_index = s.bucket_index\n    WHERE selected_start + toIntervalMinute(b.bucket_index * 30) <= selected_end\n  )\n  GROUP BY time\n)\nGROUP BY time\nORDER BY time ASC"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Running total spend across all apps compared with yesterday, same day last week, and 7-day average.",
+        "id": 1,
+        "links": [],
+        "title": "📈 Running Spend Comparison — All Apps",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "USD",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "opacity",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 3,
+                  "pointSize": 4,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#00E5FF",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Today",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "green",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineWidth",
+                      "value": 3
+                    },
+                    {
+                      "id": "custom.fillOpacity",
+                      "value": 15
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Yesterday",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "text",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          8,
+                          4
+                        ],
+                        "fill": "dash"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "same_day_last_week",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "displayName",
+                      "value": "Same Day Last Week"
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "#F97316",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          0,
+                          10
+                        ],
+                        "fill": "dot"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Seven_Day_Average",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "displayName",
+                      "value": "7-Day Average"
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "#EC4899",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          2,
+                          6
+                        ],
+                        "fill": "dot"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-10": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  key_alias AS app,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND key_alias IS NOT NULL\n  AND key_alias != ''\nGROUP BY app\nORDER BY total_spend DESC\nLIMIT 10"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Spend split by app/key alias for the selected time range.",
+        "id": 10,
+        "links": [],
+        "title": "🏢 Spend by App — Today",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "light-red",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 100,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#8B5CF6",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 6,
+              "barWidth": 0.8,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": false
+              },
+              "orientation": "horizontal",
+              "showValue": "always",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "desc"
+              },
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-2": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Total spend across all apps in the selected time range.",
+        "id": 2,
+        "links": [],
+        "title": "💰 Total Spend — All Apps",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#7C3AED",
+                  "mode": "fixed"
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#7C3AED",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-3": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  sum(total_tokens) AS total_tokens\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Total tokens consumed across all apps in the selected time range.",
+        "id": 3,
+        "links": [],
+        "title": "🧮 Tokens Consumed — All Apps",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#2563EB",
+                  "mode": "fixed"
+                },
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#2563EB",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-4": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  count(*) AS requests\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Total API requests across all apps in the selected time range.",
+        "id": 4,
+        "links": [],
+        "title": "📨 API Requests — All Apps",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                },
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#F97316",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-5": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  if(count() = 0, 0, countIf(status = 'failure') / count() * 100) AS error_rate\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Failure rate across all apps in the selected time range.",
+        "id": 5,
+        "links": [],
+        "title": "⚠️ Error Rate — All Apps",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22C55E",
+                      "value": 0
+                    },
+                    {
+                      "color": "#F59E0B",
+                      "value": 2
+                    },
+                    {
+                      "color": "#EF4444",
+                      "value": 5
+                    }
+                  ]
+                },
+                "unit": "percent"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-6": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  replaceRegexpOne(replaceRegexpOne(model, '^.*/', ''), '^global\\\\.anthropic\\\\.', '') AS model_name,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND model IS NOT NULL\n  AND model != ''\nGROUP BY model_name\nORDER BY total_spend DESC\nLIMIT 10"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Top models by spend across all apps.",
+        "id": 6,
+        "links": [],
+        "title": "💸 Cost by Model — All Apps",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 100,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#8B5CF6",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 0.5,
+              "barWidth": 0.8,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": false
+              },
+              "orientation": "horizontal",
+              "showValue": "always",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "desc"
+              },
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-7": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 1,
+                      "meta": {
+                        "builderOptions": {
+                          "columns": [],
+                          "database": "",
+                          "limit": 1000,
+                          "mode": "list",
+                          "queryType": "table",
+                          "table": ""
+                        }
+                      },
+                      "pluginVersion": "4.18.0",
+                      "queryType": "table",
+                      "rawSql": "SELECT\n  end_user,\n  sum(spend) AS total_spend\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\n  AND end_user IS NOT NULL\n  AND end_user != ''\nGROUP BY end_user\nORDER BY total_spend DESC\nLIMIT 10"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Top users by spend across all apps.",
+        "id": 7,
+        "links": [],
+        "title": "👤 Top Users by Spend — All Apps",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 100,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#F97316",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 6,
+              "barWidth": 0.97,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "right",
+                "showLegend": false
+              },
+              "orientation": "horizontal",
+              "showValue": "always",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-8": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 0,
+                      "pluginVersion": "4.18.0",
+                      "queryType": "timeseries",
+                      "rawSql": "SELECT\n  toStartOfInterval(startTime, INTERVAL 30 MINUTE) AS time,\n  sum(total_tokens) AS tokens\nFROM \"litellm_prod\".\"monitor_spendlogs\"\nWHERE startTime >= $__fromTime\n  AND startTime <= $__toTime\nGROUP BY time\nORDER BY time ASC"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Token usage trend across all apps.",
+        "id": 8,
+        "links": [],
+        "title": "📊 Tokens Over Time — All Apps",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "Tokens",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 30,
+                  "gradientMode": "opacity",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 3,
+                  "pointSize": 4,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#06B6D4",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-9": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "ffpvnlvixskjke"
+                    },
+                    "group": "grafana-clickhouse-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorType": "sql",
+                      "format": 0,
+                      "pluginVersion": "4.18.0",
+                      "queryType": "timeseries",
+                      "rawSql": "WITH\n  $__fromTime AS selected_start,\n  $__toTime AS selected_end\nSELECT\n  time,\n  if(countIf(period = 'Today') = 0, NULL, maxIf(period_spend, period = 'Today')) AS Today,\n  if(countIf(period = 'Yesterday') = 0, NULL, maxIf(period_spend, period = 'Yesterday')) AS Yesterday,\n  if(countIf(period = 'Same Day Last Week') = 0, NULL, maxIf(period_spend, period = 'Same Day Last Week')) AS same_day_last_week,\n  if(countIf(period = '7-Day Average') = 0, NULL, maxIf(period_spend, period = '7-Day Average')) AS Seven_Day_Average\nFROM\n(\n  /* Today spend per hour - real data only */\n  SELECT\n    toStartOfHour(startTime) AS time,\n    'Today' AS period,\n    sum(spend) AS period_spend\n  FROM \"litellm_prod\".\"monitor_spendlogs\"\n  WHERE startTime >= selected_start\n    AND startTime <= selected_end\n  GROUP BY time\n\n  UNION ALL\n\n  /* Yesterday spend per hour, shifted into selected day */\n  SELECT\n    selected_start + toIntervalHour(bucket_index) AS time,\n    'Yesterday' AS period,\n    sum(spend) AS period_spend\n  FROM\n  (\n    SELECT\n      toInt64(intDiv(dateDiff('minute', selected_start - INTERVAL 1 DAY, startTime), 60)) AS bucket_index,\n      spend\n    FROM \"litellm_prod\".\"monitor_spendlogs\"\n    WHERE startTime >= selected_start - INTERVAL 1 DAY\n      AND startTime <= selected_end - INTERVAL 1 DAY\n  )\n  GROUP BY time\n\n  UNION ALL\n\n  /* Same day last week spend per hour, shifted into selected day */\n  SELECT\n    selected_start + toIntervalHour(bucket_index) AS time,\n    'Same Day Last Week' AS period,\n    sum(spend) AS period_spend\n  FROM\n  (\n    SELECT\n      toInt64(intDiv(dateDiff('minute', selected_start - INTERVAL 7 DAY, startTime), 60)) AS bucket_index,\n      spend\n    FROM \"litellm_prod\".\"monitor_spendlogs\"\n    WHERE startTime >= selected_start - INTERVAL 7 DAY\n      AND startTime <= selected_end - INTERVAL 7 DAY\n  )\n  GROUP BY time\n\n  UNION ALL\n\n  /* 7-day average spend per hour */\n  SELECT\n    selected_start + toIntervalHour(bucket_index) AS time,\n    '7-Day Average' AS period,\n    avg(period_spend) AS period_spend\n  FROM\n  (\n    SELECT\n      day_offset,\n      bucket_index,\n      sum(spend) AS period_spend\n    FROM\n    (\n      SELECT\n        spend,\n        toInt64(intDiv(dateDiff('minute', startTime, selected_start), 1440) + 1) AS day_offset,\n        toInt64(\n          intDiv(\n            dateDiff(\n              'minute',\n              selected_start - toIntervalDay(toInt64(intDiv(dateDiff('minute', startTime, selected_start), 1440) + 1)),\n              startTime\n            ),\n            60\n          )\n        ) AS bucket_index\n      FROM \"litellm_prod\".\"monitor_spendlogs\"\n      WHERE startTime >= selected_start - INTERVAL 7 DAY\n        AND startTime < selected_start\n    )\n    WHERE day_offset >= 1\n      AND day_offset <= 7\n      AND bucket_index >= 0\n      AND bucket_index < 24\n    GROUP BY day_offset, bucket_index\n  )\n  GROUP BY bucket_index\n)\nGROUP BY time\nORDER BY time ASC"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "Hourly spend pattern across all apps. Today only shows actual hourly data; historical comparison lines show full-day patterns.",
+        "id": 9,
+        "links": [],
+        "title": "⏱️ Spend per Hour — All Apps",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "USD",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 15,
+                  "gradientMode": "opacity",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 3,
+                  "pointSize": 4,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#00E5FF",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "currencyUSD"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Today",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "green",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineWidth",
+                      "value": 3
+                    },
+                    {
+                      "id": "custom.fillOpacity",
+                      "value": 15
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Yesterday",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "text",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          8,
+                          4
+                        ],
+                        "fill": "dash"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "same_day_last_week",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "displayName",
+                      "value": "Same Day Last Week"
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "#F97316",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          0,
+                          10
+                        ],
+                        "fill": "dot"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Seven_Day_Average",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "displayName",
+                      "value": "7-Day Average"
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "#EC4899",
+                        "mode": "fixed"
+                      }
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "dash": [
+                          2,
+                          6
+                        ],
+                        "fill": "dot"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    }
+  },
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": [
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-2"
+            },
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-1"
+            },
+            "height": 8,
+            "width": 9,
+            "x": 6,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-9"
+            },
+            "height": 8,
+            "width": 9,
+            "x": 15,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-3"
+            },
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 4
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-4"
+            },
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-6"
+            },
+            "height": 8,
+            "width": 9,
+            "x": 6,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-7"
+            },
+            "height": 8,
+            "width": 9,
+            "x": 15,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-5"
+            },
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 12
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-10"
+            },
+            "height": 8,
+            "width": 11,
+            "x": 0,
+            "y": 16
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-8"
+            },
+            "height": 8,
+            "width": 13,
+            "x": 11,
+            "y": 16
+          }
+        }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": true,
+  "preferences": {
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": []
+      }
+    }
+  },
+  "preload": false,
+  "tags": [],
+  "timeSettings": {
+    "autoRefresh": "1m",
+    "autoRefreshIntervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now/d",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now/d"
+  },
+  "title": "LiteLLM Overall Usage Dashboard",
+  "variables": []
+}
